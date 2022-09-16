@@ -60,29 +60,30 @@ with builtins; {
     # This is built as part of the system profile.
     # We must be careful not to access `text` / `keyCommand` / `keyFile` here
     #
-    # Sadly, path units don't automatically deactivate the bound units when
-    # the key files are deleted, so we use inotifywait in the services' scripts.
-    #
     # <https://github.com/systemd/systemd/issues/3642>
     keyServiceModule = { pkgs, lib, config, ... }: {
-      systemd.paths = lib.mapAttrs' (name: val: {
-        name = "${name}-key";
-        value = {
-          wantedBy = [ "paths.target" ];
-          pathConfig = {
-            PathExists = val.path;
-          };
-        };
-      }) config.deployment.keys;
-
       systemd.services = lib.mapAttrs' (name: val: {
         name = "${name}-key";
         value = {
-          bindsTo = [ "${name}-key.path" ];
           serviceConfig = {
-            Restart = "on-failure";
+            Restart = "always";
+            TimeoutStartSec = "infinity";
           };
+          wantedBy = [ "multi-user.target" ];
           path = [ pkgs.inotifyTools ];
+          preStart = ''
+            if [[ -e "${val.path}" ]]; then
+              >&2 echo "${val.path} appeared"
+              exit 0
+            fi
+
+            inotifywait -qm -e create,moved_to --format "%f" "${val.destDir}" | while read -r file; do
+              if [[ "$file" == "${val.name}" ]]; then
+                >&2 echo "${val.path} appeared"
+                break
+              fi
+            done
+          '';
           script = ''
             if [[ ! -e "${val.path}" ]]; then
               >&2 echo "${val.path} does not exist"
